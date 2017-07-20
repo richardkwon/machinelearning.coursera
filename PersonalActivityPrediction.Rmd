@@ -6,15 +6,128 @@ output: html_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo=TRUE, cache=TRUE)
 ```
 
 ## Introduction
 The goal of this project is to predict the manner in which test subjects did the exercise. This is the "classe" variable in the training set. I may use any of the other variables to predict with.  I am to create a report describing how I built my model, how I used cross validation, what I think the expected out of sample error is, and why I made the choices you did. Finally, I will also use the prediction model to predict 20 different test cases
 
+Following deliverables will be submitted
+* A link to the Github repo
+* repo will contain R markdown file
+* repo will contain a compiled HTML file w/ all the result
+  
+  
+## Load &  Prepare Data
+Both training and test data files are pre-downloaded to the local folder.  
+```{r init}
+#rm(list=ls())
 
-```{r cars}
-summary(cars)
+# set working directory where the data files are located
+setwd("C:\\Users\\kwonr\\Projects\\Machine Learning")
+
+raw.train <- read.csv("pml-training.csv", na.strings="NA")
+raw.test <- read.csv("pml-testing.csv", na.strings="NA")
+
+dim (raw.train)
+dim (raw.test)
+
+set.seed(1534)
+
 ```
 
+Trim the unnecessary predictors.  The original data contained 159 predictor variables.
+After getting rid of mostly NULL columns and near zero columns, I am left with 53 predictors + 1 category column.  All the credit for this process goes to the folks who have posted this topic on the Week 4 forum.
+  
+The training data is split into 60/40 segments so that we can estimate the out-of-sample error.
+  
+```{r trimdata}
+library(caret)
+raw.train <- raw.train[, colSums(is.na(raw.train)) < nrow(raw.train) * 0.95]
+nearzero <- nearZeroVar(raw.train)
+raw.train <- raw.train[, -nearzero]
+raw.train <- subset(raw.train,
+                    select=-c(X,user_name,raw_timestamp_part_1,raw_timestamp_part_2,cvtd_timestamp))
 
+#60/40 split
+inTrain <- createDataPartition(y=raw.train$classe, p=0.6, list=FALSE)
+training <- raw.train[inTrain,]
+testing <- raw.train[-inTrain,]
+```
+  
+## Modeling & Prediction
+This is a classification problem.  So, I want to model using two popular and highly accurate modeling techniques - random forest and boosting.  
+
+The random forest modeling took a long time initially.  Too long.  So, going back to the Week 4 forum, I see that other people had same problem and also saw Len's suggestion on how to improve the performance.  Read about it at below location.
+[Len's Suggestion on improving the performance of Random Forest model] (https://github.com/lgreski/datasciencectacontent/blob/master/markdown/pml-randomForestPerformance.md)
+  
+  
+Random Forest modeling first via caret package. 10-fold cross validation used
+  
+```{r random_forest}
+#random forest
+
+library(parallel)
+library(doParallel)
+
+set.seed(12345)
+
+cluster <- makeCluster(detectCores() - 1)
+registerDoParallel(cluster)
+
+fitControl <- trainControl(method="cv", number=10, allowParallel=TRUE)
+
+model_rf <- train(y=training$classe,x=training[,-54],
+                  method="rf", data=training,
+                  trControl=fitControl)
+
+stopCluster(cluster)
+registerDoSEQ()
+
+#model_rf$finalModel
+
+pred_rf <- predict(model_rf, newdata=testing)
+confusionMatrix(pred_rf, testing$classe)
+
+```
+
+Random Forest Model:  
+* Accuracy: 0.9977 (99.8%)  
+* Out of Sample Error: 1 - 0.9977 = .0023 (0.23%)  
+  
+  
+Now, onto the boosting modeling using gbm (boosting with trees). Same 10-fold cross validation was used
+  
+```{r boosting}
+set.seed(54321)
+
+fitControl <- trainControl(method="cv",number=10)
+model_gbm <- train(classe ~ ., data=training, method="gbm",
+                   trControl=fitControl, verbose=FALSE)
+
+#model_gbm$finalModel
+
+pred_gbm <- predict(model_gbm, newdata=testing)
+confusionMatrix(pred_gbm, testing$classe)
+
+```
+  
+GBM Boosting Model:  
+* Accuracy: 0.9883 (98.8%)  
+* Out of Sample Error: 1 - 0.9883 (1.17%)  
+
+The Random Forest result shows the better and more accurate result.
+  
+
+## Final Test Set Prediction
+  
+Using the random forest model, run the prediction against the final test data set.
+  
+```{r finaltestset}
+all_predictors <- colnames(training)
+
+new.test <- raw.test[, names(raw.test) %in% all_predictors]
+predFinal <- predict (model_rf, newdata=new.test)
+predFinal
+
+```
